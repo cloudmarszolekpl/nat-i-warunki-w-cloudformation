@@ -1,0 +1,459 @@
+Parameters:
+  NatGatewaytoInternet:
+    Description: NAT Gateway in public network 
+    Type: String
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Default: 'No'
+    
+
+Conditions:
+ NatGateway : !Equals
+   - !Ref NatGatewaytoInternet 
+   - 'Yes'
+
+Resources:
+  # VPC
+  pierwszaSiecVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.10.0.0/16"
+      Tags:
+        -
+          Key: "projekt"
+          Value: "pierwszaSiec"
+
+  # subnet public
+  pierwszaSiecSubnetPublic:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "10.10.0.0/24"
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref pierwszaSiecVPC
+      AvailabilityZone: !Sub '${AWS::Region}a'
+      Tags:
+        -
+          Key: "projekt"
+          Value: "pierwszaSiec"
+        
+      
+  # subnet private
+  pierwszaSiecSubnetPrivate1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "10.10.1.0/24"
+      VpcId: !Ref pierwszaSiecVPC
+      AvailabilityZone: !Sub '${AWS::Region}b'
+      Tags:
+        -
+          Key: "projekt"
+          Value: "pierwszaSiec"
+      
+  # subnet private
+  pierwszaSiecSubnetPrivate2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "10.10.2.0/24"
+      VpcId: !Ref pierwszaSiecVPC
+      AvailabilityZone: !Sub '${AWS::Region}c'
+      Tags:
+        -
+          Key: "projekt"
+          Value: "pierwszaSiec"
+  # internet gateway 
+  IGPierwszasiecPodsiecPubliczna: 
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: "projekt"
+          Value: "pierwszaSiec"
+
+ # internet gateway attachment 
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref pierwszaSiecVPC
+      InternetGatewayId: !Ref IGPierwszasiecPodsiecPubliczna
+
+ # RouteTable
+  RTPierwszaSiec:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: "projekt"
+          Value: "pierwszaSiec"
+      VpcId: !Ref pierwszaSiecVPC
+
+  PierwszaSiecRoute:
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref RTPierwszaSiec
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref IGPierwszasiecPodsiecPubliczna
+# assign RouteTable to Subnet
+  mySubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref pierwszaSiecSubnetPublic
+      RouteTableId: !Ref RTPierwszaSiec
+# NAT 
+  NATgateway:
+   Condition: NatGateway
+   Type: AWS::EC2::NatGateway
+   Properties:
+      AllocationId:
+         Fn::GetAtt:
+         - EIP
+         - AllocationId
+      SubnetId: !Ref pierwszaSiecSubnetPublic
+      Tags:
+      - Key: "projekt"
+        Value: "pierwszaSiec"
+  EIP:
+   Condition: NatGateway
+   DependsOn: AttachGateway
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+  
+#end of NAT 
+# RouteTable  in case of nat to NAT 
+  RTPrivateSubnet:
+    Condition: NatGateway 
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: "projekt"
+          Value: "pierwszaSiec"
+      VpcId: !Ref pierwszaSiecVPC
+
+  PrivateSiecRoute:
+    Condition: NatGateway 
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref RTPrivateSubnet
+       DestinationCidrBlock: 0.0.0.0/0
+       NatGatewayId: !Ref NATgateway
+# assign RouteTable to private subnet 
+  mySubnetRouteTableAssociation1:
+    Condition: NatGateway 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref pierwszaSiecSubnetPrivate1
+      RouteTableId: !Ref RTPrivateSubnet
+  
+  mySubnetRouteTableAssociation2:
+    Condition: NatGateway 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref pierwszaSiecSubnetPrivate2
+      RouteTableId: !Ref RTPrivateSubnet
+
+ # ACL for Public
+  PierwszaSiecVPCNACLpublic:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref pierwszaSiecVPC
+      Tags:
+        - Key: "projekt"
+          Value: "pierwszaSiec"
+  # 3389 in from internet when you are not connect from home network with out own ipaddres  
+  networkAclentryRDP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '100'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '3389'
+        To: '3389'
+  # all in from private network private1 
+  networkAclentryinfromprivate1:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '110'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 10.10.1.0/24
+      Protocol: '6'
+      PortRange:
+        From: '32768'
+        To: '65535'
+   # all in from private2 
+  networkAclentryinfromprivate2:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '120'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 10.10.2.0/24
+      Protocol: '6'
+      PortRange:
+        From: '32768'
+        To: '65535'   
+  # all from website 
+  networkACLentryfromallweb:
+   
+    Type: AWS::EC2::NetworkAclEntry
+    Properties: 
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '130'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '1024'
+        To: '65535'   
+  # 22 in from internet when you are not connect from home network with out own ipaddres  
+  networkAclentrySSH:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '140'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+         From: '22'
+         To: '22'
+
+  # in case of if there are web server in our public network
+  networkAclentryHHTP:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '150'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '80'
+        To: '80'
+  # in case of if there are web server in our public network
+  networkAclentryHHTPS:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '160'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '443'
+        To: '443'
+
+
+# out to internet  http 80 
+  networkAclentryalloutpublicHTTP: 
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '100'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '80'
+        To: '80'
+
+# out to internet  https 443 
+  networkAclentryalloutpublicHTTPS: 
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '110'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '443'
+        To: '443'
+
+
+# out to private network 22
+  networkAclentryalloutto22private1: 
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '140'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 10.10.1.0/24
+      Protocol: '6'
+      PortRange:
+        From: '22'
+        To: '22'
+# out to private network 22
+  networkAclentryalloutto22private2: 
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '150'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 10.10.2.0/24
+      Protocol: '6'
+      PortRange:
+        From: '22'
+        To: '22'
+# out to internet  network  maybe internet ports  
+  networkAclentryallouttoprivate1: 
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      RuleNumber: '160'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '32768'
+        To: '65535'
+
+
+
+# subnetNetworkaCL asociation
+  networkACLasociationSubnetPublic:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: 
+      NetworkAclId: !Ref PierwszaSiecVPCNACLpublic
+      SubnetId: !Ref pierwszaSiecSubnetPublic
+
+# ACL for private subnet 
+  podsiecprywatnaNACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref pierwszaSiecVPC
+      Tags:
+        - Key: "projekt"
+          Value: "pierwszaSiec"
+          
+  # 22 in
+  networkAclentrySSH:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '100'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 10.10.0.0/24
+      Protocol: '6'
+      PortRange:
+        From: '22'
+        To: '22'
+   # internet accesss fron NAT 
+  networkAclentryinternetfromNAT:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '110'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 10.10.0.0/24
+      Protocol: '6'
+      PortRange:
+        From: '32768'
+        To: '65535'
+
+  networkAclentryinternetfromInternet:
+     Condition: NatGateway
+     Type: AWS::EC2::NetworkAclEntry
+     Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '120'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '1024'
+        To: '65535'
+
+
+#  out to public network 
+  networkAclentryallouttopublic:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '100'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 10.10.0.0/24
+      Protocol: '6'
+      PortRange:
+        From: '32768'
+        To: '65535'
+#  HTTP to internet 
+  networkAclentrytoHTTP:
+    Condition: NatGateway
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '110'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '80'
+        To: '80'
+#  HTTPs to internet 
+  networkAclentrytoHTTPs:
+    Condition: NatGateway
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      RuleNumber: '120'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      Protocol: '6'
+      PortRange:
+        From: '443'
+        To: '443'
+
+# subnetNetworkaCL asociation private 1
+  networkACLasociationSubnetprivate1:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: 
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      SubnetId: !Ref pierwszaSiecSubnetPrivate1
+
+# subnetNetworkaCL asociation private 2
+  networkACLasociationSubnetprivate2:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties: 
+      NetworkAclId: !Ref podsiecprywatnaNACL
+      SubnetId: !Ref pierwszaSiecSubnetPrivate2
+
+Outputs:     
+  VPCId:
+    Description: "VPCid"
+    Value: !Ref   pierwszaSiecVPC
+      
+  PublicSubentid:
+    Description: "PublicSubentid"
+    Value: !Ref pierwszaSiecSubnetPublic  
+      
+  Private1Subentid:
+    Description: "Private1Subentid"
+    Value: !Ref pierwszaSiecSubnetPrivate1  
+      
+  Private2Subentid:
+    Description: "Private2Subentid"
+    Value: !Ref pierwszaSiecSubnetPrivate2  
+
+ 
+      
